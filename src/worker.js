@@ -442,7 +442,7 @@ function responsesToChatBody(body, fallbackModel) {
 async function proxyUpstream(request, env, path) {
   const upstreamUrl = new URL(path + new URL(request.url).search, upstreamBase(env));
   const headers = new Headers(request.headers);
-  const key = optionalUpstreamApiKey(request, env);
+  const key = await optionalUpstreamApiKey(request, env);
   if (key) headers.set("authorization", `Bearer ${key}`);
   headers.delete("host");
 
@@ -460,7 +460,7 @@ async function proxyUpstream(request, env, path) {
 async function callUnlimitedJson(request, env, path, payload) {
   const response = await fetch(new URL(path, upstreamBase(env)), {
     method: "POST",
-    headers: upstreamHeaders(request, env, false),
+    headers: await upstreamHeaders(request, env, false),
     body: JSON.stringify(payload || {}),
   });
 
@@ -474,7 +474,7 @@ async function callUnlimitedJson(request, env, path, payload) {
 async function callUnlimitedStream(request, env, path, payload) {
   const response = await fetch(new URL(path, upstreamBase(env)), {
     method: "POST",
-    headers: upstreamHeaders(request, env, true),
+    headers: await upstreamHeaders(request, env, true),
     body: JSON.stringify(payload || {}),
   });
 
@@ -504,7 +504,7 @@ async function collectUnlimitedText(request, env, path, payload) {
 async function getModelCatalog(request, env) {
   try {
     const headers = new Headers();
-    const key = optionalUpstreamApiKey(request, env);
+    const key = await optionalUpstreamApiKey(request, env);
     if (key) headers.set("Authorization", `Bearer ${key}`);
     const response = await fetch(new URL("/api/models", upstreamBase(env)), { headers });
     if (!response.ok) throw new Error(`models failed: ${response.status}`);
@@ -809,31 +809,34 @@ async function readJson(request) {
   }
 }
 
-function upstreamHeaders(request, env, wantsStream) {
+async function upstreamHeaders(request, env, wantsStream) {
   const headers = new Headers();
-  headers.set("Authorization", `Bearer ${upstreamApiKey(request, env)}`);
+  headers.set("Authorization", `Bearer ${await upstreamApiKey(request, env)}`);
   headers.set("Content-Type", "application/json");
   if (wantsStream) headers.set("Accept", "text/event-stream");
   return headers;
 }
 
-function upstreamApiKey(request, env) {
-  const key = optionalUpstreamApiKey(request, env);
+async function upstreamApiKey(request, env) {
+  const key = await optionalUpstreamApiKey(request, env);
   if (key) return key;
-
   if (env.WORKER_API_KEY) {
-    throw new Error("Missing upstream API key. Set UNLIMITED_SURF_API_KEY when WORKER_API_KEY is enabled.");
+    throw new Error("Missing upstream API key. Could not auto-fetch from unlimited.surf.");
   }
-
-  throw new Error("Missing upstream API key. Set UNLIMITED_SURF_API_KEY or pass Authorization: Bearer <key> / x-api-key: <key>.");
+  throw new Error("Missing upstream API key.");
 }
 
-function optionalUpstreamApiKey(request, env) {
+async function optionalUpstreamApiKey(request, env) {
   const configured = env.UNLIMITED_SURF_API_KEY || env.API_KEY || env.AUTH_KEY;
   if (configured) return configured;
-
+  try {
+    const resp = await fetch(new URL("/api/key", upstreamBase(env)));
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data && data.key) return data.key;
+    }
+  } catch (_) {}
   if (env.WORKER_API_KEY) return "";
-
   return clientApiKey(request);
 }
 
